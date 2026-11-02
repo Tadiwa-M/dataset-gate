@@ -4,3 +4,4 @@ __pycache__/
 runs/
 _dsgate/
 *.pt
+tests/*_manifest.csv

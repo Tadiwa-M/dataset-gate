@@ -7,6 +7,24 @@ HTML + JSON report, and **exits 1 (BLOCKED) if anything would make the run's num
 dsgate check data/my_set --manifest frames.csv && python train.py     # train only if the gate passes
 ```
 
+## Try it in a minute (synthetic data, no downloads)
+```bash
+pip install -e .
+python examples/make_demo.py demo_data                                   # 50 frames, 200 tiles, 3 classes
+dsgate check demo_data --manifest demo_data/manifest.csv                 # PASSED
+dsgate bench demo_data --manifest demo_data/manifest.csv --work bench    # plants faults, scores the gate
+ollama pull qwen2.5:3b && dsgate agent bench/faulty                      # local LLM explains what broke
+```
+
+## Results
+| Dataset | Faults planted | Caught | False alarms on clean data |
+|---|---|---|---|
+| Synthetic demo (no detector) | 6 testable | **6/6** | 0 |
+| Real aerial survey tiles, with a detector | 12 (incl. swapped classes, dropped labels) | **11/12** | 0 |
+
+The one miss: a tile whose deleted labels covered only one or two small animals, below the
+"herd or very confident" threshold that keeps rocks from being flagged.
+
 Every check comes from a real failure on aerial wildlife survey data:
 
 | Check | Blocks on | Real failure it encodes |
