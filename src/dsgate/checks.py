@@ -127,6 +127,7 @@ def check_class_map(ds: Dataset, opts: dict) -> Result:
     write a per-class contact sheet for a person (or the agent's vision tool) to eyeball. This is
     the check that would have caught Kenya giraffes being trained as 'zebra'."""
     out = Path(opts["out_dir"])
+    out.mkdir(parents=True, exist_ok=True)
     v = ds.boxes[ds.boxes.parse_ok & (ds.boxes.cls >= 0) & (ds.boxes.cls < len(ds.names))]
     if v.empty:
         return Result("class_map", "SKIP", "no valid boxes")

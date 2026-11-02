@@ -97,6 +97,7 @@ def check_missing_labels(ds: Dataset, opts: dict) -> Result:
             r_, c_ = divmod(i, 6)
             sheet.paste(im.resize((C, C)), (c_ * C, r_ * (C + 14) + 14))
             d.text((c_ * C + 2, r_ * (C + 14) + 1), f"{f['kind']} {f['split']} n={f['n']} {f['max_conf']}", fill="black")
+        Path(opts["out_dir"]).mkdir(parents=True, exist_ok=True)
         p = Path(opts["out_dir"]) / "missing_labels_sheet.jpg"
         sheet.save(p, quality=88)
         arts.append(str(p))
