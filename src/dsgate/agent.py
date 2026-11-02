@@ -124,8 +124,19 @@ class Session:
 
     def run_checks(self, checks_: list | None = None, manifest: str | None = None, frame_regex: str | None = None,
                    time_gap_s: float | None = None, gps_radius_m: float | None = None) -> dict:
-        names = [c for c in (checks_ or []) if c in checks.CHECKS] or list(checks.CHECKS)
-        unknown = [c for c in (checks_ or []) if c not in checks.CHECKS]
+        def norm(c: str) -> str | None:                  # forgiving: "frame-leakage" -> group_leakage etc.
+            c = str(c).lower().replace("-", "_").replace(" ", "_")
+            if c in checks.CHECKS:
+                return c
+            alias = {"frame_leakage": "group_leakage", "duplicate_images": "duplicates", "empty_tiles": "missing_labels",
+                     "class_swap": "class_agreement", "box_validity": "labels"}
+            if c in alias:
+                return alias[c]
+            hits = [k for k in checks.CHECKS if k.split("_")[0] == c.split("_")[0] or k in c or c in k]
+            return hits[0] if len(hits) == 1 else None
+        asked = [(c, norm(c)) for c in (checks_ or [])]
+        names = list(dict.fromkeys(n for _, n in asked if n)) or list(checks.CHECKS)
+        unknown = [c for c, n in asked if not n]
         man = self._inside(manifest) if manifest else None
         if man and not man.is_file():
             return {"error": f"manifest '{manifest}' not found"}

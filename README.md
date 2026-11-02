@@ -76,6 +76,14 @@ ollama pull qwen2.5:3b
 dsgate agent data/my_set            # exit 1 when BLOCKED, like `check`
 ```
 
+## Web UI — `dsgate ui`
+A local page (standard library only, binds to 127.0.0.1): pick a dataset folder, click **Check**,
+**Run agent** or **Benchmark**, watch each check result and each agent tool call stream in live, then
+read the report, the agent's explanation and the sample sheets in the same page.
+```bash
+dsgate ui            # then open http://127.0.0.1:8765
+```
+
 ## Roadmap
 1. Footprint-based ground-overlap leakage when camera geometry is known.
 2. Point-annotation and COCO inputs.

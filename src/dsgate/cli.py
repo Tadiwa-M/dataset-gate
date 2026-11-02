@@ -42,10 +42,16 @@ def main(argv: list[str] | None = None) -> int:
     ag.add_argument("--model", help="detector .pt for the detector-backed checks")
     ag.add_argument("--device", default="cpu")
     ag.add_argument("--out")
+    ui = sub.add_parser("ui", help="local web page: run the gate / agent and watch it live")
+    ui.add_argument("--port", type=int, default=8765)
     a = ap.parse_args(argv)
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
+    if a.cmd == "ui":
+        from .ui import serve
+        serve(a.port)
+        return 0
     if a.cmd == "agent":
         from .agent import run_agent
         r = run_agent(a.dataset, a.llm, a.model, a.device, a.out)
