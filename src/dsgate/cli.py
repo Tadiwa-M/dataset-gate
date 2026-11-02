@@ -36,10 +36,20 @@ def main(argv: list[str] | None = None) -> int:
     bp.add_argument("--model")
     bp.add_argument("--device", default="cpu")
     bp.add_argument("--frames", type=int, default=60)
+    ag = sub.add_parser("agent", help="let a local LLM (Ollama) audit an unfamiliar dataset and explain it")
+    ag.add_argument("dataset")
+    ag.add_argument("--llm", default="qwen2.5:3b", help="Ollama model name")
+    ag.add_argument("--model", help="detector .pt for the detector-backed checks")
+    ag.add_argument("--device", default="cpu")
+    ag.add_argument("--out")
     a = ap.parse_args(argv)
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
+    if a.cmd == "agent":
+        from .agent import run_agent
+        r = run_agent(a.dataset, a.llm, a.model, a.device, a.out)
+        return 1 if r["verdict"] == "BLOCKED" else 0
     if a.cmd == "bench":
         from .bench import bench
         r = bench(a.dataset, a.work, a.manifest, a.model, a.frames, a.device)

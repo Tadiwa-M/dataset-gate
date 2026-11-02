@@ -43,9 +43,21 @@ time/GPS checks.
 plants known faults (frame leak, exact & near duplicates, time leak, corrupt boxes, a class removed
 from val, a swapped class pair, dropped labels), runs it again and scores what it caught.
 
+## Agent — `dsgate agent <dataset>`
+A small local LLM (default `qwen2.5:3b` via [Ollama](https://ollama.com), ~2.5 GB, free) drives the gate
+on an unfamiliar dataset: inspects it, picks checks and options, reads the evidence, and writes a
+plain-English explanation and a fix plan (`agent_report.md`). Guardrails live in code, not the prompt:
+read-only tools; paths confined to the dataset; the model may make checks **stricter, never looser**
+(time gap >= 60 s, radius >= 250 m; a frame regex that groups worse than the default is replaced);
+the **verdict is computed from the checks**, never by the model; a **number guard** flags any number in
+the explanation that no tool returned; if the model fumbles tool calls, code runs the checks and the
+model only explains.
+
+```bash
+ollama pull qwen2.5:3b
+dsgate agent data/my_set            # exit 1 when BLOCKED, like `check`
+```
+
 ## Roadmap
-1. A local agent layer (Ollama, small open model, tool calling) that inspects an unknown dataset,
-   picks the checks, explains failures in plain English and proposes fixes into a new folder — never
-   overriding a FAIL and never editing data in place.
-2. Footprint-based ground-overlap leakage when camera geometry is known.
+1. Footprint-based ground-overlap leakage when camera geometry is known.
 3. Point-annotation and COCO inputs.
