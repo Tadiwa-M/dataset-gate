@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dsgate"
+version = "0.1.0"
+description = "A pre-training gate for object-detection datasets: blocks a run on leakage, bad labels and suspicious empty tiles."
+requires-python = ">=3.10"
+dependencies = ["pandas>=2.0", "numpy>=1.24", "pillow>=10", "pyyaml>=6"]
+
+[project.optional-dependencies]
+detector = ["ultralytics>=8.3"]   # only for the missing-label check
+dev = ["pytest>=7"]
+
+[project.scripts]
+dsgate = "dsgate.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
