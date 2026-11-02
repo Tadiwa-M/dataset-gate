@@ -60,4 +60,4 @@ dsgate agent data/my_set            # exit 1 when BLOCKED, like `check`
 
 ## Roadmap
 1. Footprint-based ground-overlap leakage when camera geometry is known.
-3. Point-annotation and COCO inputs.
+2. Point-annotation and COCO inputs.
