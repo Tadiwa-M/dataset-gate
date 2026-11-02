@@ -84,6 +84,10 @@ read the report, the agent's explanation and the sample sheets in the same page.
 dsgate ui            # then open http://127.0.0.1:8765
 ```
 
+## Works with trainpilot
+[trainpilot](https://github.com/Tadiwa-M/trainpilot) is the companion training agent: a local LLM plans
+YOLO runs, and `tpilot run` executes every dataset-gate check first; a BLOCKED dataset never trains.
+
 ## Roadmap
 1. Footprint-based ground-overlap leakage when camera geometry is known.
 2. Point-annotation and COCO inputs.
