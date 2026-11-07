@@ -5,3 +5,4 @@ runs/
 _dsgate/
 *.pt
 tests/*_manifest.csv
+uploads/

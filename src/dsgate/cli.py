@@ -42,6 +42,15 @@ def main(argv: list[str] | None = None) -> int:
     ag.add_argument("--model", help="detector .pt for the detector-backed checks")
     ag.add_argument("--device", default="cpu")
     ag.add_argument("--out")
+    ag.add_argument("--manifest", help="manifest CSV the agent must use")
+    ev = sub.add_parser("eval", help="score the agent on one-fault scenarios (vs the plain gate)")
+    ev.add_argument("--dataset", action="append", required=True, help="clean dataset (repeatable)")
+    ev.add_argument("--manifest", action="append", default=[], help="DATASET=CSV manifest for a dataset")
+    ev.add_argument("--work", required=True)
+    ev.add_argument("--seeds", type=int, default=2)
+    ev.add_argument("--frames", type=int, default=40)
+    ev.add_argument("--llm", default="qwen2.5:3b")
+    ev.add_argument("--model", help="detector .pt: adds the class-swap and dropped-label scenarios")
     ui = sub.add_parser("ui", help="local web page: run the gate / agent and watch it live")
     ui.add_argument("--port", type=int, default=8765)
     a = ap.parse_args(argv)
@@ -54,8 +63,15 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if a.cmd == "agent":
         from .agent import run_agent
-        r = run_agent(a.dataset, a.llm, a.model, a.device, a.out)
+        r = run_agent(a.dataset, a.llm, a.model, a.device, a.out, manifest=a.manifest)
         return 1 if r["verdict"] == "BLOCKED" else 0
+    if a.cmd == "eval":
+        from .evaluate import evaluate
+        mans = dict(m.split("=", 1) for m in a.manifest)
+        r = evaluate(a.dataset, a.work, a.seeds, a.llm, a.model, a.frames, mans)
+        for k, v in r["summary"].items():
+            print(f"{k:34} {v}")
+        return 0
     if a.cmd == "bench":
         from .bench import bench
         r = bench(a.dataset, a.work, a.manifest, a.model, a.frames, a.device)
@@ -67,18 +83,13 @@ def main(argv: list[str] | None = None) -> int:
             "gps_radius_m": a.gps_radius, "allow_missing": a.allow_missing}
     t0 = time.time()
     ds = load(a.dataset, a.manifest, a.frame_regex)
-    results = []
-    for name, fn in checks.CHECKS.items():
-        if a.only and name not in a.only:
-            continue
-        try:
-            r = fn(ds, opts)
-        except Exception as exc:  # noqa: BLE001 — a crashing check must block, not pass silently
-            r = checks.Result(name, "FAIL", f"check crashed: {type(exc).__name__}: {exc}")
-        results.append(r)
-        print(f"  {r.status:4}  {name:15} {r.summary}", flush=True)
+    # a crashing check comes back as FAIL (blocks), never as a silent pass; your rules file is applied here
+    results, notes = checks.run(ds, opts, [n for n in checks.CHECKS if not a.only or n in a.only],
+                                on_result=lambda r: print(f"  {r.status:4}  {r.check:16} {r.summary}", flush=True))
+    for n in notes:
+        print(f"  rule  {n}")
     v = report.verdict(results, a.fail_on_warn)
-    jp, hp = report.write(results, out, str(Path(a.dataset).resolve()), v)
+    jp, hp = report.write(results, out, str(Path(a.dataset).resolve()), v, notes)
     print(f"\n{v} in {time.time() - t0:.0f} s — report: {hp}")
     return 1 if v == "BLOCKED" else 0
 

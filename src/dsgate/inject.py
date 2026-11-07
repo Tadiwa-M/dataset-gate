@@ -61,8 +61,12 @@ def sample(src: str | Path, dst: str | Path, n_frames: int = 60, seed: int = 0,
     return dst
 
 
-def inject(root: str | Path, seed: int = 1, frame_regex: str = r"_\d+_\d+$") -> list[dict]:
+def inject(root: str | Path, seed: int = 1, frame_regex: str = r"_\d+_\d+$", only: set | None = None) -> list[dict]:
+    """Plant every fault, or only those named in `only` (one-fault scenarios for evaluating the agent)."""
     root = Path(root)
+
+    def want(name: str) -> bool:
+        return only is None or name in only
     rng = random.Random(seed)
     man = root / "manifest.csv"
     ds = load(root, man if man.exists() else None, frame_regex)
@@ -80,25 +84,28 @@ def inject(root: str | Path, seed: int = 1, frame_regex: str = r"_\d+_\d+$") -> 
 
     # frame_leak: one train frame's tiles also appear in val (same frame key)
     f = rng.choice(sorted(labelled.frame.unique()))
-    for t in tr[tr.frame == f].itertuples():
-        copy_tile(t, "val", t.stem)
-    faults.append({"fault": "frame_leak", "expect": "group_leakage", "item": f})
+    if want("frame_leak"):
+        for t in tr[tr.frame == f].itertuples():
+            copy_tile(t, "val", t.stem)
+        faults.append({"fault": "frame_leak", "expect": "group_leakage", "item": f})
 
     # exact_dup: a train tile copied to test under an unrelated frame name
     t = labelled.sample(1, random_state=seed).iloc[0]
-    copy_tile(t, "test", "INJDUP_9999_0_0")
-    faults.append({"fault": "exact_dup", "expect": "duplicates", "item": "INJDUP_9999_0_0"})
+    if want("exact_dup"):
+        copy_tile(t, "test", "INJDUP_9999_0_0")
+        faults.append({"fault": "exact_dup", "expect": "duplicates", "item": "INJDUP_9999_0_0"})
 
     # near_dup: re-encoded + 3% brighter copy in test
     t = labelled.sample(1, random_state=seed + 1).iloc[0]
-    with Image.open(t.image) as im:
-        ImageEnhance.Brightness(im.convert("RGB")).enhance(1.03).save(root / "images" / "test" / "INJNEAR_9998_0_0.jpg",
-                                                                       quality=85)
-    shutil.copy2(t.label, root / "labels" / "test" / "INJNEAR_9998_0_0.txt")
-    faults.append({"fault": "near_dup", "expect": "duplicates", "item": "INJNEAR_9998_0_0"})
+    if want("near_dup"):
+        with Image.open(t.image) as im:
+            ImageEnhance.Brightness(im.convert("RGB")).enhance(1.03).save(
+                root / "images" / "test" / "INJNEAR_9998_0_0.jpg", quality=85)
+        shutil.copy2(t.label, root / "labels" / "test" / "INJNEAR_9998_0_0.txt")
+        faults.append({"fault": "near_dup", "expect": "duplicates", "item": "INJNEAR_9998_0_0"})
 
     # time_leak: a val frame moved to 10 s after a train frame
-    if man.exists():
+    if man.exists() and want("time_leak"):
         M = pd.read_csv(man)
         M["capture_time"] = pd.to_datetime(M.capture_time)
         vf = sorted(set(ds.tiles[ds.tiles.split == "val"].frame) - {f})
@@ -111,13 +118,14 @@ def inject(root: str | Path, seed: int = 1, frame_regex: str = r"_\d+_\d+$") -> 
 
     # bad_boxes: three corrupt lines appended to a train label
     t = labelled.sample(1, random_state=seed + 2).iloc[0]
-    with open(t.label, "a", encoding="utf-8") as fh:
-        fh.write(f"\n{nc + 3} 0.5 0.5 0.1 0.1\n0 1.20 0.5 0.1 0.1\n0 0.5 0.5 0 0.1\n")
-    faults.append({"fault": "bad_boxes", "expect": "labels", "item": t.stem})
+    if want("bad_boxes"):
+        with open(t.label, "a", encoding="utf-8") as fh:
+            fh.write(f"\n{nc + 3} 0.5 0.5 0.1 0.1\n0 1.20 0.5 0.1 0.1\n0 0.5 0.5 0 0.1\n")
+        faults.append({"fault": "bad_boxes", "expect": "labels", "item": t.stem})
 
     # class_hole: remove one class (present in val) from every val label file
     vb = ds.boxes[ds.boxes.split == "val"]
-    if not vb.empty:
+    if not vb.empty and want("class_hole"):
         c = int(vb.cls.value_counts().index[-1])               # rarest class in val
         for lbl in (root / "labels" / "val").glob("*.txt"):
             lines = [ln for ln in lbl.read_text().splitlines() if ln.strip() and int(float(ln.split()[0])) != c]
@@ -126,7 +134,7 @@ def inject(root: str | Path, seed: int = 1, frame_regex: str = r"_\d+_\d+$") -> 
 
     # class_swap: swap the two most common classes in 50% of train label files
     top = ds.boxes[ds.boxes.split == "train"].cls.value_counts().index[:2].tolist()
-    if len(top) == 2:
+    if len(top) == 2 and want("class_swap"):
         a, b = map(int, top)
         files = sorted({t.label for t in labelled.itertuples()})
         for lbl in rng.sample(files, len(files) // 2):
@@ -140,7 +148,7 @@ def inject(root: str | Path, seed: int = 1, frame_regex: str = r"_\d+_\d+$") -> 
         faults.append({"fault": "class_swap", "expect": "class_agreement", "item": f"{ds.names[a]}<->{ds.names[b]}"})
 
     # dropped_labels: empty the label files of 5 labelled train tiles
-    for t in labelled.sample(min(5, len(labelled)), random_state=seed + 3).itertuples():
+    for t in labelled.sample(min(5, len(labelled)), random_state=seed + 3).itertuples() if want("dropped_labels") else []:
         Path(t.label).write_text("")
         faults.append({"fault": "dropped_labels", "expect": "missing_labels", "item": t.stem})
 

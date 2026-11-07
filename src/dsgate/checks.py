@@ -135,7 +135,11 @@ def check_class_map(ds: Dataset, opts: dict) -> Result:
         .agg(n=("area", "size"), med_area=("area", "median"), med_aspect=("aspect", "median"))
     stats.index = [ds.names[i] for i in stats.index]
     rng = np.random.default_rng(0)
-    present = sorted(v.cls.unique())
+    excl = set(opts.get("exclude_classes") or [])
+    hidden = [ds.names[c] for c in sorted(v.cls.unique()) if ds.names[c].lower() in excl]
+    present = [c for c in sorted(v.cls.unique()) if ds.names[c].lower() not in excl]
+    if not present:
+        return Result("class_map", "SKIP", "every class present is marked sensitive — no sheet drawn")
     per, C = 6, 128
     sheet = Image.new("RGB", (per * C, len(present) * (C + 14)), "white")
     d = ImageDraw.Draw(sheet)
@@ -160,8 +164,9 @@ def check_class_map(ds: Dataset, opts: dict) -> Result:
     sheet.save(path, quality=88)
     return Result("class_map", "WARN" if opts.get("strict_class_map") else "PASS",
                   "per-class sample sheet written — look at it: does every row show the animal its name says? "
-                  "(statistics cannot catch a swapped id->name map)",
-                  {"per_class_stats": stats.round(4).to_dict("index")}, [str(path)])
+                  "(statistics cannot catch a swapped id->name map)"
+                  + (f"; left out as sensitive: {', '.join(hidden)}" if hidden else ""),
+                  {"per_class_stats": stats.round(4).to_dict("index"), "sensitive_not_drawn": hidden}, [str(path)])
 
 
 # ── leakage ──────────────────────────────────────────────────────────────────
@@ -277,6 +282,50 @@ def check_duplicates(ds: Dataset, opts: dict) -> Result:
 
 
 
+def check_negatives_source(ds: Dataset, opts: dict) -> Result:
+    """Empty tiles must come from frames someone actually searched (e.g. the survey task, not a test task whose
+    frames were never fully annotated). Needs a negatives task in your rules and a manifest with a task column."""
+    task, col = opts.get("negatives_task"), opts.get("task_column", "task")
+    if not task:
+        return Result("negatives_source", "SKIP", "no negatives task set in your rules")
+    M = ds.manifest
+    if M is None or col not in M.columns or "frame" not in M.columns:
+        return Result("negatives_source", "SKIP", f"needs a manifest with frame and '{col}' columns")
+    labelled = set(zip(ds.boxes.split, ds.boxes.stem))
+    empty = ds.tiles[[(a, b) not in labelled for a, b in zip(ds.tiles.split, ds.tiles.stem)]]
+    if empty.empty:
+        return Result("negatives_source", "PASS", "no empty tiles")
+    tasks = M.groupby("frame")[col].agg(lambda s: set(s.dropna().astype(str)))
+    bad = [r for r in empty.itertuples() if task not in tasks.get(r.frame, set())]
+    return Result("negatives_source", "FAIL" if bad else "PASS",
+                  f"{len(bad)} of {len(empty)} empty tiles come from frames not in task '{task}' "
+                  "(they may hold animals nobody marked)",
+                  {"examples": [(r.split, r.stem, r.frame) for r in bad[:20]]})
+
+
+def run(ds: Dataset, opts: dict, names: list[str] | None = None, rules: dict | None = None,
+        on_result=None) -> tuple[list[Result], list[str]]:
+    """Run checks with your rules merged in; returns (results, notes about rules applied)."""
+    from . import rules as rules_mod
+    rules = rules_mod.load() if rules is None else rules
+    ro = rules_mod.check_opts(rules)
+    o = {**opts, **ro}
+    o["allow_missing"] = sorted(set(opts.get("allow_missing") or []) | set(ro.get("allow_missing") or []))
+    if "gps_radius_m" in opts:                                    # caller's radius, never below the rules'
+        o["gps_radius_m"] = max(float(opts["gps_radius_m"]), float(o.get("gps_radius_m", 0)))
+    res = []
+    for name in names or list(CHECKS):
+        try:
+            r = CHECKS[name](ds, o)
+        except Exception as exc:  # noqa: BLE001
+            r = Result(name, "FAIL", f"check crashed: {type(exc).__name__}: {exc}")
+        res.append(r)
+        if on_result:
+            on_result(r)
+    notes = rules_mod.apply(res, rules)
+    return res, notes
+
+
 from .model_checks import check_class_agreement, check_missing_labels  # noqa: E402  (optional detector)
 
 CHECKS = {
@@ -288,6 +337,7 @@ CHECKS = {
     "time_leakage": check_time_leakage,
     "gps_leakage": check_gps_leakage,
     "duplicates": check_duplicates,
+    "negatives_source": check_negatives_source,
     "missing_labels": check_missing_labels,
     "class_agreement": check_class_agreement,
 }

@@ -67,19 +67,33 @@ on an unfamiliar dataset: inspects it, picks checks and options, reads the evide
 plain-English explanation and a fix plan (`agent_report.md`). Guardrails live in code, not the prompt:
 read-only tools; paths confined to the dataset; the model may make checks **stricter, never looser**
 (time gap >= 60 s, radius >= 250 m; a frame regex that groups worse than the default is replaced);
-the **verdict is computed from the checks**, never by the model; a **number guard** flags any number in
-the explanation that no tool returned; if the model fumbles tool calls, code runs the checks and the
-model only explains.
+the **verdict is computed from the checks**, never by the model; **every check runs**: whatever the model
+skips, code runs before the verdict; a **number guard** flags any number in the explanation that no tool
+returned; an explanation that loops or never mentions a check result is dropped and replaced by a
+code-written summary; answers are streamed and capped, so a looping model can't hang a run.
 
 ```bash
 ollama pull qwen2.5:3b
 dsgate agent data/my_set            # exit 1 when BLOCKED, like `check`
 ```
 
-## Web UI — `dsgate ui`
-A local page (standard library only, binds to 127.0.0.1): pick a dataset folder, click **Check**,
-**Run agent** or **Benchmark**, watch each check result and each agent tool call stream in live, then
-read the report, the agent's explanation and the sample sheets in the same page.
+## Your rules — `~/.agent-rules.yaml`
+One YAML file, shared with trainpilot, holds a project's rules; both tools enforce them in code (the LLM only
+sees them as context). Copy [`rules.example.yaml`](rules.example.yaml). Keep the real file out of git.
+- `sensitive_classes`: never drawn in sample sheets (e.g. a protected species).
+- `split.mode: spatial`: for spatially blocked splits, a `time_leakage` FAIL is read as WARN, but **only** if
+  `gps_leakage` ran and passed.
+- `negatives.from_task`: empty tiles must come from frames of the searched task (`negatives_source` check;
+  needs a manifest `task` column).
+- `class_balance.allow_missing`, `min_val`; `privacy.local_only`; trainpilot's `gpu` window and `limits`.
+Every rule applied is written into the report.
+
+## Console — `dsgate ui`
+A local page (standard library only, binds to 127.0.0.1). **Drop a dataset folder or .zip** (or paste a path:
+nothing is copied), plus an optional manifest and detector, then **Run the agent** or **Quick check**. A live
+card shows the agent's stage (Inspect → Run checks → Read evidence → Fix plan → Summary → Verdict), what the
+model is writing, its stated reasoning and a **Stop** button; the activity feed keeps the full history; your
+rules are listed beside it.
 ```bash
 dsgate ui            # then open http://127.0.0.1:8765
 ```

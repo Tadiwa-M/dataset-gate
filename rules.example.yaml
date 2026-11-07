@@ -1,0 +1,31 @@
+# Copy to ~/.agent-rules.yaml (or point $AGENT_RULES at it) and edit. Keep your real file out of git.
+# dataset-gate and trainpilot both load it and enforce it in code; the language models only see it as context.
+name: "My project rules"
+
+privacy:
+  local_only: true            # training runs offline; URLs are refused as dataset/weights paths
+
+sensitive_classes: [rhino]    # never drawn in sample sheets
+
+split:
+  mode: spatial               # spatially blocked split: time_leakage FAIL -> WARN only when gps_leakage PASSES
+  gps_radius_m: 250           # can tighten (raise) the 250 m minimum, never loosen it
+
+negatives:
+  from_task: survey           # empty tiles must come from frames of this task (manifest column below)
+  task_column: task
+
+class_balance:
+  min_val: 10
+  allow_missing: []
+
+gpu:
+  min_free_vram_gb: 4
+  train_window: "20:00-07:00" # launches outside it need an explicit override in the console
+
+limits:                       # trainpilot hard limits: narrow the built-in ranges, never widen
+  batch: [1, 8]
+
+planner_notes:
+  - "Keep batch small: the GPU is shared."
+  - "Aerial imagery: flip both ways."

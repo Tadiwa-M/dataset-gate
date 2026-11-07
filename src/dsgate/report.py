@@ -19,10 +19,11 @@ def verdict(results: list[Result], fail_on_warn: bool = False) -> str:
     return "PASSED"
 
 
-def write(results: list[Result], out_dir: Path, dataset: str, v: str) -> tuple[Path, Path]:
+def write(results: list[Result], out_dir: Path, dataset: str, v: str,
+          rule_notes: list[str] | None = None) -> tuple[Path, Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y-%m-%d %H:%M:%S")
-    data = {"dataset": dataset, "verdict": v, "time": stamp,
+    data = {"dataset": dataset, "verdict": v, "time": stamp, "rules_applied": rule_notes or [],
             "results": [{"check": r.check, "status": r.status, "summary": r.summary,
                          "details": r.details, "artifacts": r.artifacts} for r in results]}
     jp = out_dir / "report.json"
@@ -50,5 +51,6 @@ img{{max-width:100%;border:1px solid var(--line);border-radius:6px;margin:6px 0}
 pre{{font-size:12px;overflow-x:auto}} .m{{color:var(--muted)}}
 </style></head><body><main><h1>Dataset gate report</h1>
 <p class="m">{html.escape(dataset)} · {stamp}</p><p class="big">{v}</p>
+{''.join(f'<p class="m">Your rule applied: {html.escape(n)}</p>' for n in rule_notes or [])}
 {''.join(rows)}</main></body></html>""", encoding="utf-8")
     return jp, hp
