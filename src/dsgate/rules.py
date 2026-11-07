@@ -4,7 +4,7 @@ in code. The agents' language models only ever see them as context; they cannot 
 File: $AGENT_RULES, else ~/.agent-rules.yaml (keep it out of git: it can name clients and species). No file means
 no rules. See rules.example.yaml. Keys, all optional:
 
-  name: "GNP rules"                          shown in the consoles
+  name: "My project rules"                   shown in the consoles
   privacy: {local_only: true}                training runs offline (no hub sync, no downloads); URLs refused as paths
   sensitive_classes: [rhino]                 never drawn in sample sheets or other shareable images
   split: {mode: spatial, gps_radius_m: 250}  spatially blocked split: frames close in time but far apart on the
