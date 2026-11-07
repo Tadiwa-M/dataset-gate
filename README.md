@@ -19,7 +19,7 @@ ollama pull qwen2.5:3b && dsgate agent bench/faulty                      # local
 ## Results
 | Dataset | Faults planted | Caught | False alarms on clean data |
 |---|---|---|---|
-| Synthetic demo (no detector) | 6 testable | **6/6** | 0 |
+| Synthetic demo (no detector) | 7 testable | **7/7** | 0 |
 | Real aerial survey tiles, with a detector | 12 (incl. swapped classes, dropped labels) | **11/12** | 0 |
 
 The one miss: a tile whose deleted labels covered only one or two small animals, below the
@@ -30,10 +30,14 @@ Every check comes from a real failure on aerial wildlife survey data:
 | Check | Blocks on | Real failure it encodes |
 |---|---|---|
 | `structure` | missing train/val, labels without images | — |
+| `images` | an image that won't open or decode (empty, truncated, corrupt) | a dataloader crash hours into a run |
+| `image_sizes` | (warns) unexpected tile sizes; width/height swapped | frames rotated by EXIF while their labels weren't |
 | `labels` | class id out of range, boxes outside the image, zero-size boxes | — |
 | `class_balance` | a class with 0 instances in val/test | silently drops out of mAP |
+| `empty_ratio` | (warns) a split's background share far from train's, or almost all background | precision / false-alarm numbers that don't compare |
 | `class_map` | (writes a per-class sample sheet to eyeball) | swapped id→name maps |
 | `group_leakage` | tiles of one source frame in two splits | tile-level splitting |
+| `tile_overlap` | (warns) overlapping tiles of one frame in a split; boxes in the overlaps | edge animals counted twice in training and scores |
 | `time_leakage` | cross-split frames < N s apart (`--manifest` capture_time) | survey frames 2 s apart = same animals; a 0.65 mAP that was really 0.37 |
 | `gps_leakage` | cross-split frames < N m apart (`--manifest` lat/lon) | adjacent transects / re-flights |
 | `duplicates` | byte-identical or near-identical (dHash) images across splits | — |
@@ -59,7 +63,7 @@ time/GPS checks.
 ## Does it work? — `dsgate bench`
 `dsgate bench <clean dataset> --work <dir>` takes a stratified sample, runs the gate (false alarms?),
 plants known faults (frame leak, exact & near duplicates, time leak, corrupt boxes, a class removed
-from val, a swapped class pair, dropped labels), runs it again and scores what it caught.
+from val, a swapped class pair, dropped labels, a truncated image), runs it again and scores what it caught.
 
 ## Agent — `dsgate agent <dataset>`
 A small local LLM (default `qwen2.5:3b` via [Ollama](https://ollama.com), ~2.5 GB, free) drives the gate

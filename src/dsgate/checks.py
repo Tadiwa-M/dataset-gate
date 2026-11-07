@@ -5,7 +5,9 @@ Born from real failures on aerial wildlife data:
   * duplicates — the same image in two splits;
   * class map — Kenya labels trained with the wrong id->name map (giraffe as "zebra", zebra dropped);
   * split balance — a class with 0 val instances silently drops out of mAP;
-  * missing labels — "empty" tiles that hold herds the annotator missed.
+  * missing labels — "empty" tiles that hold herds the annotator missed;
+  * images / sizes / overlap / background share — corrupt files, rotated frames, animals counted twice by
+    overlapping tiles, val splits far emptier than train.
 """
 from __future__ import annotations
 
@@ -149,8 +151,11 @@ def check_class_map(ds: Dataset, opts: dict) -> Result:
         pick = g.iloc[rng.permutation(len(g))[:per]]
         d.text((2, r * (C + 14) + 1), f"{c} {ds.names[c]}  (n={len(g)})", fill="black")
         for k, b in enumerate(pick.itertuples()):
-            with Image.open(paths[(b.split, b.stem)]) as im0:
-                im = im0.convert("RGB")
+            try:
+                with Image.open(paths[(b.split, b.stem)]) as im0:
+                    im = im0.convert("RGB")
+            except Exception:  # noqa: BLE001 — unreadable images are the `images` check's finding
+                continue
             W, H = im.size
             s = max(b.w * W, b.h * H) * 3 + 24
             cx, cy = b.cx * W, b.cy * H
@@ -254,7 +259,10 @@ def check_duplicates(ds: Dataset, opts: dict) -> Result:
     for t in ds.tiles.itertuples():
         b = Path(t.image).read_bytes()
         md5.setdefault(hashlib.md5(b).hexdigest(), []).append((t.split, t.stem))
-        dh.append((_dhash(t.image), t.split, t.stem))
+        try:
+            dh.append((_dhash(t.image), t.split, t.stem))
+        except Exception:  # noqa: BLE001 — unreadable images are the `images` check's finding
+            continue
     exact_x = [v for v in md5.values() if len({s for s, _ in v}) > 1]
     exact_in = sum(len(v) - 1 for v in md5.values() if len(v) > 1)
     thr = int(opts.get("dhash_bits", 4))
@@ -280,6 +288,111 @@ def check_duplicates(ds: Dataset, opts: dict) -> Result:
                   {"cross_split_exact": exact_x[:10], "cross_split_near": near[:20]})
 
 
+
+
+# ── images, tiles, background ────────────────────────────────────────────────
+def _image_meta(ds: Dataset) -> pd.DataFrame:
+    """Decode every image once (cached on the dataset): size, or the error that stopped it."""
+    meta = getattr(ds, "_img_meta", None)
+    if meta is None:
+        rows = []
+        for t in ds.tiles.itertuples():
+            w = h = None
+            err = None
+            try:
+                if Path(t.image).stat().st_size == 0:
+                    raise ValueError("empty file")
+                with Image.open(t.image) as im:
+                    im.load()                                   # full decode: catches truncated files
+                    w, h = im.size
+            except Exception as exc:  # noqa: BLE001 — any failure to decode is the finding
+                err = f"{type(exc).__name__}: {exc}"[:160]
+            rows.append({"split": t.split, "stem": t.stem, "frame": t.frame, "w": w, "h": h, "error": err})
+        meta = pd.DataFrame(rows, columns=["split", "stem", "frame", "w", "h", "error"])
+        ds._img_meta = meta
+    return meta
+
+
+def check_images(ds: Dataset, opts: dict) -> Result:
+    """Every image must open and decode: a corrupt file crashes a dataloader mid-run or trains as noise."""
+    m = _image_meta(ds)
+    bad = m[m.error.notna()]
+    return Result("images", "FAIL" if len(bad) else "PASS",
+                  f"{len(bad)} of {len(m)} images could not be opened or decoded",
+                  {"unreadable": [(r.split, r.stem, r.error) for r in bad.head(20).itertuples()]})
+
+
+def check_image_sizes(ds: Dataset, opts: dict) -> Result:
+    """Tiles should share a few sizes. Odd sizes point at a tiling bug; width/height swapped points at a frame
+    that was rotated (EXIF orientation) while its labels were not."""
+    m = _image_meta(ds).dropna(subset=["w", "h"])
+    if m.empty:
+        return Result("image_sizes", "SKIP", "no readable images")
+    sizes = m.groupby(["w", "h"]).size().sort_values(ascending=False)
+    (mw, mh), n_main = sizes.index[0], int(sizes.iloc[0])
+    rotated = m[(m.w == mh) & (m.h == mw) & (mw != mh)]
+    rare = [(f"{int(w)}x{int(h)}", int(n)) for (w, h), n in sizes.items()
+            if n < max(2, 0.02 * len(m)) and not (w == mh and h == mw)]
+    status = "WARN" if len(rotated) or rare else "PASS"
+    return Result("image_sizes", status,
+                  f"most common size {int(mw)}x{int(mh)} ({n_main} of {len(m)}); {len(sizes)} distinct sizes; "
+                  f"{len(rotated)} images with width and height swapped (rotated?); {len(rare)} rare sizes",
+                  {"sizes": {f"{int(w)}x{int(h)}": int(n) for (w, h), n in sizes.head(10).items()},
+                   "rotated": rotated.stem.head(20).tolist(), "rare_sizes": rare[:20]})
+
+
+def check_tile_overlap(ds: Dataset, opts: dict) -> Result:
+    """Tiles cut with overlap put one animal in two tiles. Across splits that is group_leakage; inside a split
+    it double-counts animals (and their weight in training). Needs tile names ending in _<x>_<y> pixel offsets."""
+    m = _image_meta(ds).dropna(subset=["w", "h"])
+    xy = m.stem.str.extract(r"_(\d+)_(\d+)$").astype(float)
+    m = m.assign(x=xy[0], y=xy[1]).dropna(subset=["x", "y"])
+    if m.empty:
+        return Result("tile_overlap", "SKIP", "tile names carry no _<x>_<y> offsets — can't place tiles in their frame")
+    tiles = m[["split", "stem", "x", "y", "w", "h"]].rename(columns={"w": "W", "h": "H"})
+    bx = ds.boxes[ds.boxes.parse_ok].merge(tiles, on=["split", "stem"])
+    bx = bx.assign(fx=bx.x + bx.cx * bx.W, fy=bx.y + bx.cy * bx.H)          # box centre in frame pixels
+    by_tile = {k: g for k, g in bx.groupby(["split", "stem"])}
+    empty = bx.iloc[:0]
+    pairs, dup = 0, set()
+    for (split, frame), g in m.groupby(["split", "frame"]):
+        t = g.to_dict("records")
+        for i in range(len(t)):
+            for j in range(i + 1, len(t)):
+                a, b = t[i], t[j]
+                ox = min(a["x"] + a["w"], b["x"] + b["w"]) - max(a["x"], b["x"])
+                oy = min(a["y"] + a["h"], b["y"] + b["h"]) - max(a["y"], b["y"])
+                if ox > 0 and oy > 0:
+                    pairs += 1
+                    x0, y0 = max(a["x"], b["x"]), max(a["y"], b["y"])
+                    g2 = by_tile.get((split, a["stem"]), empty)
+                    inb = g2[(g2.fx >= x0) & (g2.fx < x0 + ox) & (g2.fy >= y0) & (g2.fy < y0 + oy)]
+                    dup.update(zip(inb.split, inb.stem, inb.line))
+    dup_boxes = len(dup)
+    status = "WARN" if dup_boxes else "PASS"
+    return Result("tile_overlap", status,
+                  f"{pairs} overlapping tile pairs within splits; {dup_boxes} labelled boxes sit in an overlap, so the "
+                  "same animal is also in a neighbouring tile (counted twice in training and in the scores) — fine if the overlap is deliberate",
+                  {"overlapping_pairs": pairs, "boxes_in_overlaps": dup_boxes})
+
+
+def check_empty_ratio(ds: Dataset, opts: dict) -> Result:
+    """Share of background (label-less) tiles per split. A val/test split much emptier or fuller than train
+    makes precision and false-alarm numbers incomparable with training; almost-all-empty splits score nothing."""
+    labelled = set(zip(ds.boxes.split, ds.boxes.stem))
+    t = ds.tiles.assign(empty=[(a, b) not in labelled for a, b in zip(ds.tiles.split, ds.tiles.stem)])
+    r = t.groupby("split").empty.mean().round(3).to_dict()
+    gap = float(opts.get("empty_ratio_gap", 0.2))
+    base = r.get("train")
+    off = {k: v for k, v in r.items() if base is not None and k != "train" and abs(v - base) > gap}
+    full = {k: v for k, v in r.items() if v > 0.95}
+    status = "WARN" if off or full else "PASS"
+    msg = "background share per split: " + ", ".join(f"{k} {v:.0%}" for k, v in r.items())
+    if off:
+        msg += f"; differs from train by more than {gap:.0%}: {list(off)}"
+    if full:
+        msg += f"; almost all background: {list(full)}"
+    return Result("empty_ratio", status, msg, {"empty_share": r})
 
 
 def check_negatives_source(ds: Dataset, opts: dict) -> Result:
@@ -330,10 +443,14 @@ from .model_checks import check_class_agreement, check_missing_labels  # noqa: E
 
 CHECKS = {
     "structure": check_structure,
+    "images": check_images,
+    "image_sizes": check_image_sizes,
     "labels": check_labels,
     "class_balance": check_class_balance,
+    "empty_ratio": check_empty_ratio,
     "class_map": check_class_map,
     "group_leakage": check_group_leakage,
+    "tile_overlap": check_tile_overlap,
     "time_leakage": check_time_leakage,
     "gps_leakage": check_gps_leakage,
     "duplicates": check_duplicates,

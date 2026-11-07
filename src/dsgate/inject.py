@@ -10,6 +10,7 @@ Faults (each mirrors a real failure on aerial survey data):
   class_hole    every instance of one class removed from VAL (its boxes deleted)
   class_swap    two class ids swapped in a share of TRAIN label files (the Kenya bug)
   dropped_labels all boxes removed from some TRAIN tiles (missed animals -> "empty" tiles)
+  corrupt_image a TRAIN image truncated to half its bytes
 """
 from __future__ import annotations
 
@@ -151,6 +152,13 @@ def inject(root: str | Path, seed: int = 1, frame_regex: str = r"_\d+_\d+$", onl
     for t in labelled.sample(min(5, len(labelled)), random_state=seed + 3).itertuples() if want("dropped_labels") else []:
         Path(t.label).write_text("")
         faults.append({"fault": "dropped_labels", "expect": "missing_labels", "item": t.stem})
+
+    # corrupt_image: a train image cut to half its bytes (a truncated copy / interrupted download)
+    if want("corrupt_image"):
+        t = labelled.sample(1, random_state=seed + 4).iloc[0]
+        b = Path(t.image).read_bytes()
+        Path(t.image).write_bytes(b[: len(b) // 2])
+        faults.append({"fault": "corrupt_image", "expect": "images", "item": t.stem})
 
     (root / "faults.json").write_text(json.dumps(faults, indent=1))
     return faults

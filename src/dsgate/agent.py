@@ -76,7 +76,11 @@ TOOLS = [
 
 CHECK_HELP = {
     "structure": "folders, image/label pairing, splits present (no inputs)",
+    "images": "every image opens and decodes (no inputs)",
+    "image_sizes": "unexpected tile sizes; width/height swapped = rotated frames (no inputs)",
     "labels": "malformed / out-of-range / zero-size / tiny / duplicate boxes (no inputs)",
+    "empty_ratio": "background (label-less) share per split compared with train (no inputs)",
+    "tile_overlap": "overlapping tiles of one frame inside a split: animals counted twice (needs _x_y tile names)",
     "class_balance": "every class in every split; rare classes in val (no inputs)",
     "class_map": "writes a per-class sample sheet for a person to eyeball (no inputs)",
     "group_leakage": "tiles of one source frame in two splits (needs a correct frame_regex)",
